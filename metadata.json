@@ -1,0 +1,7 @@
+{
+  "name": "Gemini Multi-Modal Studio",
+  "description": "An all-in-one application to generate and edit images, generate videos from text and images, analyze media, have fast text chats, generate speech, and engage in real-time voice conversations using the power of Google's Gemini models.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
