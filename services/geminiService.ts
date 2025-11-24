@@ -100,19 +100,50 @@ export const pcmToWav = (pcmData: Uint8Array, sampleRate: number, numChannels: n
 
 const getAi = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-export const generateImage = async (prompt: string, aspectRatio: string): Promise<string> => {
+export const generateImage = async (
+    prompt: string,
+    aspectRatio: string,
+    referenceImages?: { base64: string; mimeType: string }[]
+): Promise<string> => {
     const ai = getAi();
-    const response = await ai.models.generateImages({
-        model: 'imagen-4.0-generate-001',
-        prompt: prompt,
-        config: {
-            numberOfImages: 1,
-            outputMimeType: 'image/jpeg',
-            aspectRatio: aspectRatio as "1:1" | "3:4" | "4:3" | "9:16" | "16:9",
-        },
-    });
-    const base64ImageBytes = response.generatedImages[0].image.imageBytes;
-    return `data:image/jpeg;base64,${base64ImageBytes}`;
+
+    if (referenceImages && referenceImages.length > 0) {
+        // Use Gemini Flash Image for generation with references
+        const parts: any[] = [{ text: prompt }];
+        for (const image of referenceImages) {
+            parts.push({ inlineData: { data: image.base64, mimeType: image.mimeType } });
+        }
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: { parts },
+            config: {
+                responseModalities: [Modality.IMAGE],
+            },
+        });
+
+        for (const part of response.candidates[0].content.parts) {
+            if (part.inlineData) {
+                const base64ImageBytes: string = part.inlineData.data;
+                return `data:image/png;base64,${base64ImageBytes}`;
+            }
+        }
+        throw new Error("No image generated from reference images.");
+
+    } else {
+        // Use Imagen for text-to-image generation
+        const response = await ai.models.generateImages({
+            model: 'imagen-4.0-generate-001',
+            prompt: prompt,
+            config: {
+                numberOfImages: 1,
+                outputMimeType: 'image/jpeg',
+                aspectRatio: aspectRatio as "1:1" | "3:4" | "4:3" | "9:16" | "16:9",
+            },
+        });
+        const base64ImageBytes = response.generatedImages[0].image.imageBytes;
+        return `data:image/jpeg;base64,${base64ImageBytes}`;
+    }
 };
 
 export const editImage = async (prompt: string, imageBase64: string, mimeType: string): Promise<string> => {

@@ -63,16 +63,28 @@ const TabButton: FC<TabButtonProps> = ({ label, isActive, onClick }) => (
   </button>
 );
 
-const FileInput: FC<{ onFileChange: (file: File) => void; accept: string; label?: string }> = ({ onFileChange, accept, label = "Upload File" }) => {
+const FileInput: FC<{
+    onFileChange: (file: File) => void;
+    onFilesChange?: (files: FileList) => void;
+    accept: string;
+    label?: string;
+    multiple?: boolean;
+    disabled?: boolean;
+}> = ({ onFileChange, onFilesChange, accept, label = "Upload File", multiple = false, disabled = false }) => {
     const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files[0]) {
-            onFileChange(e.target.files[0]);
+        if (e.target.files) {
+            if (multiple && onFilesChange) {
+                onFilesChange(e.target.files);
+            } else if (!multiple && e.target.files[0]) {
+                onFileChange(e.target.files[0]);
+            }
+            e.target.value = ''; // Allow re-selecting the same file
         }
     };
     return (
-        <label className="w-full cursor-pointer bg-gray-700 hover:bg-gray-600 text-white font-semibold py-3 px-4 rounded-lg transition-all duration-200 text-center">
+        <label className={`w-full font-semibold py-3 px-4 rounded-lg transition-all duration-200 text-center ${disabled ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-gray-700 hover:bg-gray-600 text-white cursor-pointer'}`}>
             {label}
-            <input type="file" className="hidden" accept={accept} onChange={handleFileChange} />
+            <input type="file" className="hidden" accept={accept} onChange={handleFileChange} multiple={multiple} disabled={disabled} />
         </label>
     );
 };
@@ -85,6 +97,18 @@ const ImageGenerationTab: FC = () => {
     const [loading, setLoading] = useState(false);
     const [image, setImage] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [referenceImages, setReferenceImages] = useState<{ file: File; url: string }[]>([]);
+
+    const handleFileChange = (files: FileList) => {
+        const newImages = Array.from(files)
+            .slice(0, 3 - referenceImages.length)
+            .map(file => ({ file, url: URL.createObjectURL(file) }));
+        setReferenceImages(prev => [...prev, ...newImages]);
+    };
+
+    const removeImage = (index: number) => {
+        setReferenceImages(prev => prev.filter((_, i) => i !== index));
+    };
 
     const handleSubmit = async () => {
         if (!prompt) {
@@ -95,7 +119,14 @@ const ImageGenerationTab: FC = () => {
         setError(null);
         setImage(null);
         try {
-            const result = await geminiService.generateImage(prompt, aspectRatio);
+            let imagePayloads;
+            if (referenceImages.length > 0) {
+                imagePayloads = await Promise.all(referenceImages.map(async (img) => {
+                    const base64 = await geminiService.fileToBase64(img.file);
+                    return { base64, mimeType: img.file.type };
+                }));
+            }
+            const result = await geminiService.generateImage(prompt, aspectRatio, imagePayloads);
             setImage(result);
         } catch (e) {
             setError(e instanceof Error ? e.message : 'An unknown error occurred.');
@@ -104,27 +135,71 @@ const ImageGenerationTab: FC = () => {
         }
     };
 
+    const hasReferenceImages = referenceImages.length > 0;
+
     return (
         <div className="space-y-6">
-            <h2 className="text-2xl font-bold text-cyan-400">Generate Image with Imagen</h2>
+            <h2 className="text-2xl font-bold text-cyan-400">Generate Image with Imagen & Gemini</h2>
+            <p className="text-gray-400 -mt-4">Generate from a text prompt, or provide up to 3 reference images to guide the AI.</p>
+            
+            <div className="p-4 bg-gray-700/50 rounded-lg space-y-4">
+                <h3 className="font-semibold text-lg">Reference Images (Optional)</h3>
+                <FileInput
+                    onFileChange={() => {}} 
+                    onFilesChange={handleFileChange}
+                    accept="image/*"
+                    label={referenceImages.length < 3 ? `Add Reference Image(s) (${referenceImages.length}/3)` : "Maximum 3 images uploaded"}
+                    multiple
+                    disabled={referenceImages.length >= 3}
+                />
+                {hasReferenceImages && (
+                    <div className="grid grid-cols-3 gap-4">
+                        {referenceImages.map((img, index) => (
+                            <div key={index} className="relative group">
+                                <img src={img.url} alt={`Reference ${index + 1}`} className="rounded-md w-full h-full object-cover aspect-square" />
+                                <button
+                                    onClick={() => removeImage(index)}
+                                    className="absolute top-1 right-1 bg-red-600/80 hover:bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                                    aria-label="Remove image"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                                    </svg>
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+                 {hasReferenceImages && (
+                    <button
+                        onClick={() => setReferenceImages([])}
+                        className="w-full bg-red-600 hover:bg-red-500 text-white font-bold py-2 px-4 rounded-lg transition-all duration-200 text-sm"
+                    >
+                        Clear All Images
+                    </button>
+                )}
+            </div>
+
             <textarea
                 className="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:outline-none"
                 rows={3}
-                placeholder="e.g., A photo of a raccoon wearing a cowboy hat, photorealistic."
+                placeholder={hasReferenceImages ? "e.g., Make the cat wear a party hat" : "e.g., A photo of a raccoon wearing a cowboy hat, photorealistic."}
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
             />
-            <div className="flex items-center space-x-4">
-                <label htmlFor="aspect-ratio" className="font-semibold">Aspect Ratio:</label>
-                <select
-                    id="aspect-ratio"
-                    className="p-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:outline-none"
-                    value={aspectRatio}
-                    onChange={(e) => setAspectRatio(e.target.value)}
-                >
-                    {['1:1', '16:9', '9:16', '4:3', '3:4'].map(ratio => <option key={ratio} value={ratio}>{ratio}</option>)}
-                </select>
-            </div>
+            {!hasReferenceImages && (
+                <div className="flex items-center space-x-4">
+                    <label htmlFor="aspect-ratio" className="font-semibold">Aspect Ratio:</label>
+                    <select
+                        id="aspect-ratio"
+                        className="p-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:outline-none"
+                        value={aspectRatio}
+                        onChange={(e) => setAspectRatio(e.target.value)}
+                    >
+                        {['1:1', '16:9', '9:16', '4:3', '3:4'].map(ratio => <option key={ratio} value={ratio}>{ratio}</option>)}
+                    </select>
+                </div>
+            )}
             <button
                 onClick={handleSubmit}
                 disabled={loading}
